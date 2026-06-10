@@ -10,6 +10,7 @@ USERS_FILE = "users.txt"
 os.makedirs(FILES_DIR, exist_ok=True)
 
 uploads = {}  
+online_connections = {}
 online_users = set()
 lock = threading.Lock()
 
@@ -89,6 +90,8 @@ def login(username, password):
 def logout(username):
     with lock:
         online_users.discard(username)
+    with lock:
+        online_connections.pop(username, None)
 
 
 def save_metadata(user, filename, size):
@@ -170,6 +173,8 @@ def handle_client(conn, addr):
 
                 if response == "AUTH SUCCESS":
                     current_user = username
+                    with lock:
+                        online_connections[username] = conn
 
                 conn.sendall(response.encode())
 
@@ -180,13 +185,12 @@ def handle_client(conn, addr):
                     current_user = None
                     conn.sendall(b"LOGGED OUT")
                 else:
-                    conn.sendall(b"ERROR AUTH REQUIRED")    
+                    conn.sendall(b"ERROR authentication requried")    
                 
 
             elif command == "LIST_USERS" and msg_type == "CTRL":
-                
                 if not current_user:
-                    conn.sendall(b"ERROR AUTH REQUIRED")
+                    conn.sendall(b"ERROR authentication required")
 
                 else:
                     with lock:
@@ -198,7 +202,7 @@ def handle_client(conn, addr):
 
             elif command == "UPLOAD" and msg_type == "CTRL":
                 if not current_user:
-                    conn.sendall(b"ERROR AUTH REQUIRED")
+                    conn.sendall(b"ERROR authentication requried")
                     continue
 
                 if len(parts) != 4:
@@ -216,7 +220,10 @@ def handle_client(conn, addr):
                     continue
 
                 # file path on disc
-                path = os.path.join(FILES_DIR, filename)
+                user_dir = os.path.join(FILES_DIR, current_user)
+                os.makedirs(user_dir, exist_ok=True)
+
+                path = os.path.join(user_dir, filename)
 
                 with lock:
                     uploads[filename] = {
@@ -235,6 +242,68 @@ def handle_client(conn, addr):
 
                 conn.sendall(b"BYE\n")
                 break
+
+            elif command == "LIST_FILES" and msg_type == "CTRL":
+                if not current_user:
+                    conn.sendall(b"ERROR authentication required")
+                    continue
+
+                files = set()
+
+                if os.path.exists(DB_FILE):
+                    with open(DB_FILE, "r") as f:
+                        for line in f:
+                            line = line.strip()
+
+                            if not line:
+                                continue
+
+                            user, filename, size, timestamp = line.split("|")
+
+                            if user == current_user:
+                                files.add(filename)
+
+                if not files:
+                    conn.sendall(b"FILE_LIST empty")
+                else:
+                    response = "FILE_LIST " + ",".join(files)
+                    conn.sendall(response.encode())
+
+
+            elif command == "SHARE" and msg_type == "CTRL":
+                if not current_user:
+                    conn.sendall(b"ERROR authentication required")
+                    continue
+
+                if len(parts) != 4:
+                    conn.sendall(b"ERROR invalid format")
+                    continue
+
+                filename = parts[2]
+                target_user = parts[3]
+
+                file_path = os.path.join(FILES_DIR, current_user, filename)
+
+                if not os.path.exists(file_path):
+                    conn.sendall(b"ERROR file not found")
+                    continue
+
+                users = load_users()
+
+                if target_user not in users:
+                    conn.sendall(b"ERROR target user not found")
+                    continue
+
+                with lock:
+                    if target_user not in online_connections:
+                        conn.sendall(b"ERROR target user is offline")
+                        continue
+
+                target_conn = online_connections[target_user]
+                msg = f"SHARE_REQUEST|{current_user}|{filename}\n"
+                target_conn.sendall(msg.encode())
+
+                conn.sendall(b"OK")
 
 
             elif command == "FILE_CHUNK" and msg_type == "DATA":
@@ -276,6 +345,7 @@ def handle_client(conn, addr):
 
                 conn.sendall(b"UPLOAD_SUCCESS\n")
 
+            
 
             else:
                 conn.sendall(b"ERROR unknown command")

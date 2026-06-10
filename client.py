@@ -1,7 +1,9 @@
 import socket
+import os
 
 HOST = socket.gethostbyname(socket.gethostname())
 PORT = 7777
+
 
 def main():
 
@@ -16,7 +18,9 @@ def main():
         print("3. Logout")
         print("4. List users")
         print("5. Upload file")
-        print("6. Exit")
+        print("6. List files")
+        print("7. Share")
+        print("8. Exit")
 
         choice = input("Choice: ")
 
@@ -47,6 +51,17 @@ def main():
             upload(client)
 
         elif choice == "6":
+            send_command(client, "CTRL|LIST_FILES\n")
+
+        elif choice == "7":
+            filename = input("filename: ")
+            username = input("Username: ")
+
+            msg = f"CTRL|SHARE|{filename}|{username}\n"
+
+            send_command(client, msg)
+
+        elif choice == "8":
             send_command(client, "CTRL|EXIT\n")
             break
 
@@ -69,6 +84,10 @@ def upload(sock):
 
     filename = input("filename: ")
     size = int(input("size: "))
+
+    if not os.path.isfile(filename):
+        print("ERROR invalid filename")
+        return
 
     resp = send_command(sock, f"CTRL|UPLOAD|{filename}|{size}\n")
     if not resp.startswith("OK"):
