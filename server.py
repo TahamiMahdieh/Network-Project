@@ -9,6 +9,7 @@ USERS_FILE = "users.txt"
 
 os.makedirs(FILES_DIR, exist_ok=True)
 
+pending_shares = {}
 uploads = {}  
 online_connections = {}
 online_users = set()
@@ -139,7 +140,7 @@ def handle_client(conn, addr):
             parts = line.split("|")
 
             if len(parts) < 2:
-                conn.sendall(b"ERROR invalid command")
+                conn.sendall(b"ERROR invalid command\n")
                 continue
 
             msg_type = parts[0]
@@ -148,30 +149,30 @@ def handle_client(conn, addr):
             if command == "REGISTER" and msg_type == "CTRL":
 
                 if len(parts) != 4:
-                    conn.sendall(b"ERROR invalid format")
+                    conn.sendall(b"ERROR invalid format\n")
                     continue
 
                 username = parts[2]
                 password = parts[3]
 
-                response = register(username, password)
+                response = register(username, password) + "\n"
                 conn.sendall(response.encode())
 
             elif command == "LOGIN" and msg_type == "CTRL":
                 if current_user:
-                    conn.sendall(b'ERROR: you should log out first')
+                    conn.sendall(b'ERROR: you should log out first\n')
                     continue
 
                 if len(parts) != 4:
-                    conn.sendall(b"ERROR invalid format")
+                    conn.sendall(b"ERROR invalid format\n")
                     continue
 
                 username = parts[2]
                 password = parts[3]
 
-                response = login(username, password)
+                response = login(username, password) + "\n"
 
-                if response == "AUTH SUCCESS":
+                if response == "AUTH SUCCESS\n":
                     current_user = username
                     with lock:
                         online_connections[username] = conn
@@ -183,30 +184,30 @@ def handle_client(conn, addr):
                 if current_user:
                     logout(current_user)
                     current_user = None
-                    conn.sendall(b"LOGGED OUT")
+                    conn.sendall(b"LOGGED OUT\n")
                 else:
-                    conn.sendall(b"ERROR authentication requried")    
+                    conn.sendall(b"ERROR authentication requried\n")    
                 
 
             elif command == "LIST_USERS" and msg_type == "CTRL":
                 if not current_user:
-                    conn.sendall(b"ERROR authentication required")
+                    conn.sendall(b"ERROR authentication required\n")
 
                 else:
                     with lock:
                         users = [user for user in online_users if user != current_user]
 
-                    response = "USER_LIST " + ",".join(users)
+                    response = "USER_LIST " + ",".join(users) + "\n"
                     conn.sendall(response.encode())
                 
 
             elif command == "UPLOAD" and msg_type == "CTRL":
                 if not current_user:
-                    conn.sendall(b"ERROR authentication requried")
+                    conn.sendall(b"ERROR authentication requried\n")
                     continue
 
                 if len(parts) != 4:
-                    conn.sendall(b"ERROR invalid format")
+                    conn.sendall(b"ERROR invalid format\n")
                     continue
 
                 filename = parts[2]
@@ -216,7 +217,7 @@ def handle_client(conn, addr):
                     if filesize <= 0:
                         raise ValueError
                 except:
-                    conn.sendall(b"ERROR invalid filesize")
+                    conn.sendall(b"ERROR invalid filesize\n")
                     continue
 
                 # file path on disc
@@ -245,7 +246,7 @@ def handle_client(conn, addr):
 
             elif command == "LIST_FILES" and msg_type == "CTRL":
                 if not current_user:
-                    conn.sendall(b"ERROR authentication required")
+                    conn.sendall(b"ERROR authentication required\n")
                     continue
 
                 files = set()
@@ -264,19 +265,19 @@ def handle_client(conn, addr):
                                 files.add(filename)
 
                 if not files:
-                    conn.sendall(b"FILE_LIST empty")
+                    conn.sendall(b"FILE_LIST empty\n")
                 else:
-                    response = "FILE_LIST " + ",".join(files)
+                    response = "FILE_LIST " + ",".join(files) + "\n"
                     conn.sendall(response.encode())
 
 
             elif command == "SHARE" and msg_type == "CTRL":
                 if not current_user:
-                    conn.sendall(b"ERROR authentication required")
+                    conn.sendall(b"ERROR authentication required\n")
                     continue
 
                 if len(parts) != 4:
-                    conn.sendall(b"ERROR invalid format")
+                    conn.sendall(b"ERROR invalid format\n")
                     continue
 
                 filename = parts[2]
@@ -285,26 +286,96 @@ def handle_client(conn, addr):
                 file_path = os.path.join(FILES_DIR, current_user, filename)
 
                 if not os.path.exists(file_path):
-                    conn.sendall(b"ERROR file not found")
+                    conn.sendall(b"ERROR file not found\n")
                     continue
 
                 users = load_users()
 
                 if target_user not in users:
-                    conn.sendall(b"ERROR target user not found")
+                    conn.sendall(b"ERROR target user not found\n")
                     continue
 
                 with lock:
                     if target_user not in online_connections:
-                        conn.sendall(b"ERROR target user is offline")
+                        conn.sendall(b"ERROR target user is offline\n")
                         continue
 
                 target_conn = online_connections[target_user]
                 msg = f"SHARE_REQUEST|{current_user}|{filename}\n"
                 target_conn.sendall(msg.encode())
 
-                conn.sendall(b"OK")
+                conn.sendall(b"OK\n")
 
+                pending_shares[target_user] = {
+                    "from": current_user,
+                    "file": filename
+                }
+            
+
+            elif command == "ACCEPT_FILE" and msg_type == "DATA":
+                if not current_user:
+                    conn.sendall(b"ERROR authentication required\n")
+                    continue
+
+                filename = parts[2]
+
+                if current_user not in pending_shares:
+                    conn.sendall(b"ERROR no pending share\n")
+                    continue
+
+                share = pending_shares[current_user]
+
+                if share["file"] != filename:
+                    conn.sendall(b"ERROR invalid file\n")
+                    continue
+
+                # begin sending file
+                sender = share["from"]
+                path = os.path.join(FILES_DIR, sender, filename)
+
+                conn.sendall(b"SHARE_ACCEPTED\n")
+
+
+                chunk_size = 1024
+
+                with open(path, "rb") as f:
+                    data = f.read()
+                
+                idx = 1
+
+                for i in range(0, len(data), chunk_size):
+                    chunk = data[i:i+chunk_size]
+
+                    header = f"DATA|FILE_CHUNK|{filename}|{idx}|{len(chunk)}|{current_user}\n"
+                    conn.sendall(header.encode())
+                    conn.sendall(chunk)
+
+                    idx += 1
+
+                conn.sendall(f"DATA|END_FILE|{filename}\n".encode())
+                del pending_shares[current_user]
+
+
+            elif command == "REJECT_FILE" and msg_type == "DATA":
+                if not current_user:
+                    conn.sendall(b"ERROR authentication required\n")
+                    continue
+
+                filename = parts[2]
+
+                if current_user not in pending_shares:
+                    conn.sendall(b"ERROR no pending share\n")
+                    continue
+
+                share = pending_shares[current_user]
+
+                if share["file"] != filename:
+                    conn.sendall(b"ERROR invalid file\n")
+                    continue
+
+                del pending_shares[current_user]
+
+                conn.sendall(b"SHARE_REJECTED\n")
 
             elif command == "FILE_CHUNK" and msg_type == "DATA":
 
@@ -348,7 +419,7 @@ def handle_client(conn, addr):
             
 
             else:
-                conn.sendall(b"ERROR unknown command")
+                conn.sendall(b"ERROR unknown command\n")
 
     except Exception as e:
         print(e)
