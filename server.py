@@ -125,6 +125,7 @@ def handle_client(conn, addr):
     print(f"[CONNECTED] {addr}")
 
     current_user = None
+    user_upload_keys = set()
 
     try:
         while True:
@@ -227,12 +228,15 @@ def handle_client(conn, addr):
                 path = os.path.join(user_dir, filename)
 
                 with lock:
-                    uploads[filename] = {
+                    uploads[(current_user, filename)] = {
                         "file": open(path, "wb"),
+                        "path": path,
                         "size": filesize,
                         "received": 0,
                         "user": current_user
                     }
+                
+                user_upload_keys.add((current_user, filename))
 
                 conn.sendall(b"OK\n")
                         
@@ -382,29 +386,30 @@ def handle_client(conn, addr):
                 filename = parts[2]
                 chunk_size = int(parts[4])
 
-                if filename not in uploads:
+                if (current_user, filename) not in uploads:
                     conn.sendall(b"ERROR no upload session\n")
                     continue
-
+                
                 chunk = recv_exact(conn, chunk_size)
 
-                uploads[filename]["file"].write(chunk)
-                uploads[filename]["received"] += len(chunk)
+
+                uploads[(current_user, filename)]["file"].write(chunk)
+                uploads[(current_user, filename)]["received"] += len(chunk)
 
 
 
             elif command == "END_FILE" and msg_type == "DATA":
                 filename = parts[2]
 
-                if filename not in uploads:
+                if (current_user, filename) not in uploads:
                     conn.sendall(b"ERROR no upload session\n")
                     continue
 
-                file_info = uploads[filename]
+                file_info = uploads[(current_user, filename)]
 
                 if file_info["received"] != file_info["size"]:
                     file_info["file"].close()
-                    del uploads[filename]
+                    del uploads[(current_user, filename)]
                     conn.sendall(b"ERROR incomplete upload\n")
                     continue
 
@@ -412,7 +417,7 @@ def handle_client(conn, addr):
 
                 save_metadata(file_info["user"], filename, file_info["size"])
 
-                del uploads[filename]
+                del uploads[(current_user, filename)]
 
                 conn.sendall(b"UPLOAD_SUCCESS\n")
 
@@ -456,9 +461,29 @@ def handle_client(conn, addr):
         print(e)
 
     finally:
+        for key in list(user_upload_keys):
+            if key in uploads:
+                info = uploads[key]
+
+                try:
+                    info["file"].close()
+                except:
+                    pass
+
+                if info["received"] < info["size"]:
+                    print(f"[UPLOAD FAILED] {key[1]} from {key[0]}")
+
+                    try:
+                        if os.path.exists(info["path"]):
+                            os.remove(info["path"])
+                    except:
+                        pass
+
+                uploads.pop(key, None)
 
         if current_user:
             logout(current_user)
+
 
         conn.close()
         print(f"[DISCONNECTED] {addr}")
