@@ -416,6 +416,37 @@ def handle_client(conn, addr):
 
                 conn.sendall(b"UPLOAD_SUCCESS\n")
 
+
+            elif command == "CHAT" and msg_type == "DATA":
+                if not current_user:
+                    conn.sendall(b"ERROR authentication required\n")
+                    continue
+
+                if len(parts) < 4:
+                    conn.sendall(b"ERROR invalid format\n")
+                    continue
+
+                target_user = parts[2]
+
+                message = "|".join(parts[3:])
+
+                users = load_users()
+
+                if target_user not in users:
+                    conn.sendall(b"ERROR target user not found\n")
+                    continue
+
+                with lock:
+                    if target_user not in online_connections:
+                        conn.sendall(b"ERROR target user is offline\n")
+                        continue
+
+                    target_conn = online_connections[target_user]
+                
+                target_conn.sendall(f"CHAT_FROM|{current_user}|{message}\n".encode())
+                conn.sendall(b"MESSAGE_SENT\n")
+
+
             
 
             else:

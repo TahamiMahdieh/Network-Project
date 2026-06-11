@@ -16,7 +16,7 @@ def main():
     t.start()
     
     while True:
-        time.sleep(0.1)
+        time.sleep(0.2)
         print("\n1. Register")
         print("2. Login")
         print("3. Logout")
@@ -25,7 +25,8 @@ def main():
         print("6. List files")
         print("7. Share")
         print("8. View share requests")
-        print("9. Exit")
+        print("9. Chat")
+        print("10. Exit")
 
         choice = input("Choice: ")
 
@@ -98,8 +99,13 @@ def main():
 
             pending_shares.pop(req_num - 1)
 
-
         elif choice == "9":
+            username = input("Target user: ")
+            message = input("Message: ")
+
+            send(client, f"DATA|CHAT|{username}|{message}\n")
+
+        elif choice == "10":
             send(client, "CTRL|EXIT\n")
             break
 
@@ -156,6 +162,10 @@ def receiver(sock):
                     del download_files[filename]
 
                 print(f"\nDownload complete: {filename}")
+            
+            elif msg.startswith("CHAT_FROM"):
+                _, sender, message = msg.split("|", 2)
+                print(f"\n[CHAT] {sender}: {message}")
 
 
         except Exception as e:
@@ -229,3 +239,9 @@ def recv_line(sock):
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
