@@ -129,12 +129,10 @@ def handle_client(conn, addr):
 
     try:
         while True:
-
             line = recv_line(conn)
 
             if not line:
                 break
-
 
             print(f"[RECEIVED] {line}")
 
@@ -447,12 +445,48 @@ def handle_client(conn, addr):
                         continue
 
                     target_conn = online_connections[target_user]
+
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                log_line = f"{timestamp} | {current_user} -> {target_user} | {message}\n"
+
+                os.makedirs("chat_logs", exist_ok=True)
+
+                user1, user2 = sorted([current_user, target_user])
+                file_path = f"chat_logs/{user1}_{user2}.txt"
+
+                with open(file_path, "a", encoding="utf-8") as f:
+                    f.write(log_line)
                 
                 target_conn.sendall(f"CHAT_FROM|{current_user}|{message}\n".encode())
                 conn.sendall(b"MESSAGE_SENT\n")
 
 
-            
+            elif command == "HISTORY" and msg_type == "DATA":
+                if not current_user:
+                    conn.sendall(b"ERROR authentication required\n")
+                    continue
+
+                if len(parts) < 3:
+                    conn.sendall(b"ERROR invalid format\n")
+                    continue
+
+                target_user = parts[2]
+
+                user1, user2 = sorted([current_user, target_user])
+                file_path = f"chat_logs/{user1}_{user2}.txt"
+
+                if not os.path.exists(file_path):
+                    conn.sendall(b"NO_HISTORY\n")
+                    continue
+
+                with open(file_path, "r", encoding="utf-8") as f:
+                    history = f.read()
+
+                conn.sendall(b"HISTORY_BEGIN\n")
+                for line in history.splitlines():
+                    conn.sendall(f"{line}\n".encode())
+                conn.sendall(b"HISTORY_END\n")
 
             else:
                 conn.sendall(b"ERROR unknown command\n")

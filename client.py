@@ -26,7 +26,8 @@ def main():
         print("7. Share")
         print("8. View share requests")
         print("9. Chat")
-        print("10. Exit")
+        print("10. Chat history")
+        print("11. Exit")
 
         choice = input("Choice: ")
 
@@ -106,6 +107,10 @@ def main():
             send(client, f"DATA|CHAT|{username}|{message}\n")
 
         elif choice == "10":
+            username = input("Target user: ")
+            send(client, f"DATA|HISTORY|{username}\n")
+
+        elif choice == "11":
             send(client, "CTRL|EXIT\n")
             break
 
@@ -166,6 +171,19 @@ def receiver(sock):
             elif msg.startswith("CHAT_FROM"):
                 _, sender, message = msg.split("|", 2)
                 print(f"\n[CHAT] {sender}: {message}")
+
+            elif msg.startswith("HISTORY_BEGIN"):
+                history = []
+                while True:
+                    line = recv_line(sock)
+
+                    if line == "HISTORY_END":
+                        break
+
+                    history.append(line)
+
+                print("\n".join(history) + "\nHISTORY_END")
+                
 
 
         except Exception as e:
